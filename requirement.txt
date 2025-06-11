@@ -1,0 +1,5 @@
+streamlit
+google-generativeai
+numpy
+python-dotenv
+scikit-learn # 如果你用了 cosine similarity
