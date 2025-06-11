@@ -1,7 +1,7 @@
 # app.py
 import streamlit as st
 import json
-from script.main import GeminiRAG  # 從你的 script 資料夾導入 GeminiRAG 類別
+from main import GeminiRAG  # 從你的 script 資料夾導入 GeminiRAG 類別
 import os
 import dotenv
 dotenv.load_dotenv()
