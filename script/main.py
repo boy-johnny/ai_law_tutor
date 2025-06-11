@@ -71,40 +71,64 @@ class GeminiRAG:
             logger.info("儲存成功。")
         except Exception as e:
             logger.error(f"儲存向量資料庫至檔案時失敗: {e}")
-    def _load_documents(self) -> List[Dict]:
+    def _load_documents(self):
         """
-        載入文檔
-        
-        Returns:
-            List[Dict]: 文檔列表
+        從文檔目錄載入所有文檔，並驗證格式。
         """
-        documents = []
-        try:
-            # 獲取所有 .md 文件
-            md_files = glob.glob(os.path.join(self.docs_dir, "**/*.md"), recursive=True)
-            if not md_files:
-                logger.warning(f"在目錄 '{self.docs_dir}' 中找不到任何 .md 文件。")
-                return []
-            
-            for file_path in md_files:
-                try:
+        logger.info(f"從 '{self.docs_dir}' 目錄載入文檔...")
+        docs = []
+        all_files = glob.glob(os.path.join(self.docs_dir, "**/*"), recursive=True)
+
+        for file_path in all_files:
+            if os.path.isdir(file_path):
+                continue
+
+            file_name = os.path.basename(file_path)
+            try:
+                # --- 文字檔案處理 ---
+                if file_name.endswith(('.md', '.txt')):
                     with open(file_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        # 將文檔分段
-                        chunks = self._split_text(content)
-                        for chunk in chunks:
-                            documents.append({
-                                "content": chunk,
-                                "source": os.path.basename(file_path) # <<< 建議變更：只顯示檔名可能更簡潔
-                            })
-                except Exception as e:
-                    logger.error(f"讀取文件 {file_path} 時發生錯誤: {str(e)}")
-            
-            logger.info(f"成功載入 {len(documents)} 個文檔片段")
-            return documents
-        except Exception as e:
-            logger.error(f"載入文檔時發生錯誤: {str(e)}")
-            return []
+                        docs.append({"content": f.read(), "source": file_name})
+                
+                # --- JSONL 檔案處理 ---
+                elif file_name.endswith('.jsonl'):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for i, line in enumerate(f):
+                            try:
+                                data = json.loads(line)
+                                # <<< 關鍵檢查點 >>>
+                                if 'content' in data and 'source' in data:
+                                    docs.append(data)
+                                else:
+                                    logger.warning(f"檔案 {file_name} 的第 {i+1} 行缺少 'content' 或 'source' 鍵，已略過。")
+                            except json.JSONDecodeError:
+                                logger.warning(f"無法解析檔案 {file_name} 的第 {i+1} 行，已略過。")
+
+                # --- JSON 檔案處理 ---
+                elif file_name.endswith('.json'):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        all_data = json.load(f)
+                        # 處理整個檔案是一個文檔列表的情況
+                        if isinstance(all_data, list):
+                            for i, item in enumerate(all_data):
+                                # <<< 關鍵檢查點 >>>
+                                if isinstance(item, dict) and 'content' in item and 'source' in item:
+                                    docs.append(item)
+                                else:
+                                    logger.warning(f"檔案 {file_name} 列表中的第 {i+1} 個項目格式不正確，已略過。")
+                        # 處理整個檔案是一個單一文檔的情況
+                        elif isinstance(all_data, dict):
+                            # <<< 關鍵檢查點 >>>
+                            if 'content' in all_data and 'source' in all_data:
+                                docs.append(all_data)
+                            else:
+                                logger.warning(f"檔案 {file_name} 格式不正確，已略過。")
+
+            except Exception as e:
+                logger.error(f"讀取文件 {file_path} 時發生嚴重錯誤: {e}")
+
+        logger.info(f"成功載入並驗證了 {len(docs)} 個文檔。")
+        return docs
     
     def _split_text(self, text: str, chunk_size: int = 1000, overlap: int = 200) -> List[str]:
         """
@@ -364,30 +388,29 @@ def main():
 
     rag_system = GeminiRAG(api_key, docs_dir=my_docs_directory, db_path="my_textbook.pkl")
 
-    # --- 測試不同類型的查詢 ---
-    # 查詢 1: 要求生成測驗題
-    print("\n--- 任務：生成測驗題 ---")
-    quiz_query = "請根據的內容出一道選擇題"
-    print(f"問題：{quiz_query}")
-    quiz_response = rag_system.process_query(quiz_query)
-    # 使用 json.dumps 美化輸出
+     # --- 測試 1: 解析法律概念 ---
+    print("\n--- 任務：解析法律概念 ---")
+    concept_query = "何謂「行政自我拘束原則」？"
+    print(f"問題：{concept_query}")
+    user_answer = ""
+    response1 = rag_system.process_query(query=concept_query, task_type="explain_concept", user_answer=user_answer)
     print("回答 (JSON):")
-    print(json.dumps(quiz_response, indent=2, ensure_ascii=False))
+    print(json.dumps(response1, indent=2, ensure_ascii=False))
 
-    # 查詢 2: 要求解釋概念
-    print("\n--- 任務：解釋概念 ---")
-    explanation_query = "什麼是 Pharmacogenetics？"
-    print(f"問題：{explanation_query}")
-    explanation_response = rag_system.process_query(explanation_query)
-    print("回答 (JSON):")
-    print(json.dumps(explanation_response, indent=2, ensure_ascii=False))
-
-    # 查詢 3: 測試快取 (重複查詢)
-    print("\n--- 任務：測試快取 ---")
-    print(f"問題：{explanation_query}")
-    cached_response = rag_system.process_query(explanation_query)
-    print("回答 (JSON from Cache):")
-    print(json.dumps(cached_response, indent=2, ensure_ascii=False))
+    # --- 測試 2: 批改申論題 ---
+    print("\n--- 任務：批改申論題 ---")
+    essay_question = "何謂「行政自我拘束原則」？其理論基礎及具體適用之要件為何？請申論之。"
+    user_answer = "行政自我拘束原則就是說行政機關要遵守自己訂的規定，這跟平等原則有關。如果之前都這樣做，以後也要這樣做。"
+    print(f"題目：{essay_question}")
+    print(f"學生答案：{user_answer}")
+    
+    response2 = rag_system.process_query(
+        query=essay_question,
+        task_type="grade_essay",  # <<-- 使用正確的 task_type
+        user_answer=user_answer
+    )
+    print("評語 (JSON):")
+    print(json.dumps(response2, indent=2, ensure_ascii=False))
 
 
     # 輸出性能指標
